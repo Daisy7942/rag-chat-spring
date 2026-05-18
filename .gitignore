@@ -16,3 +16,5 @@ target/
 .DS_Store
 Thumbs.db
 .springBeans
+
+src/main/resources/data/
