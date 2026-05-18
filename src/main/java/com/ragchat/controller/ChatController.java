@@ -1,10 +1,13 @@
 package com.ragchat.controller;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import org.springframework.stereotype.Controller;
-import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseBody;
 
 @Controller
 public class ChatController {
@@ -14,13 +17,17 @@ public class ChatController {
 		return "chat";
 	}
 
-	@PostMapping("/chat")
-	public String sendMessage(@RequestParam("question") String question, Model model) {
+	@PostMapping(value = "/chat/ajax", produces = "application/json; charset=UTF-8")
+	@ResponseBody
+	public Map<String, Object> chatAjax(@RequestParam("question") String question) {
+
 		String answer = "임시 응답입니다. 입력한 질문: " + question;
 
-		model.addAttribute("question", question);
-		model.addAttribute("answer", answer);
+		Map<String, Object> result = new HashMap<>();
+		result.put("success", true);
+		result.put("question", question);
+		result.put("answer", answer);
 
-		return "chat";
+		return result;
 	}
 }
