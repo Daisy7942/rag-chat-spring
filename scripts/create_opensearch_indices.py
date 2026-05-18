@@ -46,35 +46,90 @@ def get_embedding_dimension():
         raise RuntimeError("Ollama embedding 응답에서 embeddings 값을 찾지 못했습니다.")
 
     dimension = len(embeddings[0])
+
     print(f"embedding model: {EMBEDDING_MODEL}")
     print(f"embedding dimension: {dimension}")
 
     return dimension
 
 
-def create_index(index_name, security_level, dimension):
+def delete_index_if_exists(index_name):
     url = f"{OPENSEARCH_URL}/{index_name}"
 
     exists_response = requests.head(
         url,
         auth=(OPENSEARCH_USERNAME, OPENSEARCH_PASSWORD),
-        verify=False
+        verify=False,
+        timeout=30
     )
 
     if exists_response.status_code == 200:
-        print(f"already exists: {index_name}")
-        return
+        delete_response = requests.delete(
+            url,
+            auth=(OPENSEARCH_USERNAME, OPENSEARCH_PASSWORD),
+            verify=False,
+            timeout=60
+        )
+
+        if delete_response.status_code not in [200, 202]:
+            print(f"delete failed: {index_name}")
+            print(delete_response.status_code)
+            print(delete_response.text)
+            return
+
+        print(f"deleted: {index_name}")
+    else:
+        print(f"not exists: {index_name}")
+
+
+def create_index(index_name, security_level, dimension):
+    url = f"{OPENSEARCH_URL}/{index_name}"
 
     body = {
         "settings": {
             "index": {
                 "knn": True
+            },
+            "analysis": {
+                "tokenizer": {
+                    "korean_nori_tokenizer": {
+                        "type": "nori_tokenizer",
+                        "decompound_mode": "mixed"
+                    }
+                },
+                "analyzer": {
+                    "korean_nori": {
+                        "type": "custom",
+                        "tokenizer": "korean_nori_tokenizer",
+                        "filter": [
+                            "lowercase"
+                        ]
+                    }
+                }
             }
         },
         "mappings": {
             "_meta": {
                 "security_level": security_level
             },
+            "dynamic_templates": [
+                {
+                    "strings_as_nori": {
+                        "match_mapping_type": "string",
+                        "mapping": {
+                            "type": "text",
+                            "analyzer": "korean_nori",
+                            "search_analyzer": "korean_nori",
+                            "fields": {
+                                "keyword": {
+                                    "type": "keyword",
+                                    "ignore_above": 256
+                                }
+                            }
+                        }
+                    }
+                }
+            ],
             "properties": {
                 "doc_id": {
                     "type": "keyword"
@@ -83,7 +138,9 @@ def create_index(index_name, security_level, dimension):
                     "type": "keyword"
                 },
                 "embedding_text": {
-                    "type": "text"
+                    "type": "text",
+                    "analyzer": "korean_nori",
+                    "search_analyzer": "korean_nori"
                 },
                 "embedding_vector": {
                     "type": "knn_vector",
@@ -97,16 +154,17 @@ def create_index(index_name, security_level, dimension):
         url,
         json=body,
         auth=(OPENSEARCH_USERNAME, OPENSEARCH_PASSWORD),
-        verify=False
+        verify=False,
+        timeout=60
     )
 
     if response.status_code not in [200, 201]:
-        print(f"failed: {index_name}")
+        print(f"create failed: {index_name}")
         print(response.status_code)
         print(response.text)
         return
 
-    print(f"created: {index_name} / security_level={security_level}")
+    print(f"created: {index_name} / security_level={security_level} / analyzer=korean_nori")
 
 
 def main():
@@ -116,9 +174,10 @@ def main():
     dimension = get_embedding_dimension()
 
     for index_name, security_level in INDEX_SECURITY_LEVELS.items():
+        delete_index_if_exists(index_name)
         create_index(index_name, security_level, dimension)
 
-    print("OpenSearch index creation completed.")
+    print("OpenSearch index recreation with Nori completed.")
 
 
 if __name__ == "__main__":
