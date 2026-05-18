@@ -1,9 +1,12 @@
 package com.ragchat.controller;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import com.ragchat.service.ChatService;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,10 +31,19 @@ public class ChatController {
 
 		String answer = chatService.generateAnswer(question);
 
+		Map<String, Object> permission = new HashMap<>();
+		permission.put("allowed", true);
+		permission.put("level", 1);
+
+		List<Map<String, Object>> sources = new ArrayList<>();
+
 		Map<String, Object> result = new HashMap<>();
 		result.put("success", true);
 		result.put("question", question);
 		result.put("answer", answer);
+		result.put("permission", permission);
+		result.put("sources", sources);
+		result.put("error", null);
 
 		return result;
 	}
