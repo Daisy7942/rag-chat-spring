@@ -17,7 +17,9 @@
 	<br>
 
 	<form id="chatForm">
-		<input type="text" id="question" name="question"
+		<input type="text" id="employeeId" name="employee_id"
+			placeholder="사원번호 입력 예: EMP0001" style="width: 400px;"> <br>
+		<br> <input type="text" id="question" name="question"
 			placeholder="질문을 입력하세요" style="width: 400px;">
 		<button type="submit">전송</button>
 	</form>
@@ -30,7 +32,13 @@
 
             const questionInput = document.getElementById("question");
             const question = questionInput.value.trim();
-
+            const employeeIdInput = document.getElementById("employeeId");
+            const employeeId = employeeIdInput.value.trim();
+            
+            if (employeeId === "") {
+                alert("사원번호를 입력하세요.");
+                return;
+            }
             if (question === "") {
                 alert("질문을 입력하세요.");
                 return;
@@ -41,7 +49,8 @@
                 headers: {
                     "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
                 },
-                body: "question=" + encodeURIComponent(question)
+                body: "employee_id=" + encodeURIComponent(employeeId)
+                + "&question=" + encodeURIComponent(question)
             })
             .then(response => response.json())
             .then(data => {
