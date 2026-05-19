@@ -335,6 +335,132 @@ public class OpenSearchService {
 		}
 	}
 
+	private List<Double> createQuestionEmbedding(String question) {
+		try {
+			String ollamaUrl = getConfig("OLLAMA_URL", "http://localhost:11434");
+			String embeddingModel = getConfig("EMBEDDING_MODEL", "bge-m3:latest");
+
+			String url = ollamaUrl + "/api/embed";
+
+			Map<String, Object> body = new HashMap<>();
+			body.put("model", embeddingModel);
+			body.put("input", question);
+
+			String jsonBody = objectMapper.writeValueAsString(body);
+
+			URL requestUrl = new URL(url);
+			HttpURLConnection conn = (HttpURLConnection) requestUrl.openConnection();
+
+			conn.setRequestMethod("POST");
+			conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+			conn.setDoOutput(true);
+
+			try (OutputStream os = conn.getOutputStream()) {
+				byte[] input = jsonBody.getBytes(StandardCharsets.UTF_8);
+				os.write(input, 0, input.length);
+			}
+
+			int statusCode = conn.getResponseCode();
+
+			InputStream responseStream;
+
+			if (statusCode >= 200 && statusCode < 300) {
+				responseStream = conn.getInputStream();
+			} else {
+				responseStream = conn.getErrorStream();
+			}
+
+			String responseBody = readStream(responseStream);
+
+			if (statusCode < 200 || statusCode >= 300) {
+				throw new RuntimeException("Ollama embedding API 오류: " + statusCode + " / " + responseBody);
+			}
+
+			JsonNode root = objectMapper.readTree(responseBody);
+			JsonNode embeddings = root.path("embeddings");
+
+			if (!embeddings.isArray() || embeddings.size() == 0) {
+				throw new RuntimeException("Ollama embedding 응답에 embeddings 값이 없습니다.");
+			}
+
+			JsonNode firstEmbedding = embeddings.get(0);
+
+			List<Double> vector = new ArrayList<>();
+
+			for (JsonNode value : firstEmbedding) {
+				vector.add(value.asDouble());
+			}
+
+			return vector;
+
+		} catch (Exception e) {
+			System.out.println("[OpenSearch] createQuestionEmbedding error");
+			e.printStackTrace();
+			return new ArrayList<>();
+		}
+	}
+
+	public List<Map<String, Object>> vectorSearch(String indexName, String question, int size) {
+		List<Map<String, Object>> resultList = new ArrayList<>();
+
+		try {
+			List<Double> queryVector = createQuestionEmbedding(question);
+
+			if (queryVector == null || queryVector.isEmpty()) {
+				return resultList;
+			}
+
+			String url = getConfig("OPENSEARCH_URL", DEFAULT_OPENSEARCH_URL) + "/" + indexName + "/_search";
+
+			Map<String, Object> vectorBody = new HashMap<>();
+			vectorBody.put("vector", queryVector);
+			vectorBody.put("k", size);
+
+			Map<String, Object> knnBody = new HashMap<>();
+			knnBody.put("embedding_vector", vectorBody);
+
+			Map<String, Object> query = new HashMap<>();
+			query.put("knn", knnBody);
+
+			Map<String, Object> source = new HashMap<>();
+
+			List<String> excludes = new ArrayList<>();
+			excludes.add("embedding_vector");
+
+			source.put("excludes", excludes);
+
+			Map<String, Object> body = new HashMap<>();
+			body.put("query", query);
+			body.put("size", size);
+			body.put("_source", source);
+
+			String responseBody = sendPost(url, body);
+
+			JsonNode root = objectMapper.readTree(responseBody);
+			JsonNode hits = root.path("hits").path("hits");
+
+			if (!hits.isArray() || hits.size() == 0) {
+				return resultList;
+			}
+
+			for (JsonNode hit : hits) {
+				JsonNode sourceNode = hit.path("_source");
+
+				Map<String, Object> row = objectMapper.convertValue(sourceNode, Map.class);
+				row.put("_score", hit.path("_score").asDouble());
+
+				resultList.add(row);
+			}
+
+			return resultList;
+
+		} catch (Exception e) {
+			System.out.println("[OpenSearch] vectorSearch error");
+			e.printStackTrace();
+			return resultList;
+		}
+	}
+
 	private String sendPost(String urlString, Map<String, Object> body) throws Exception {
 		trustAllCertificates();
 

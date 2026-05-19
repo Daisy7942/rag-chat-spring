@@ -154,7 +154,33 @@ public class ChatService {
 
 			return result;
 		}
+		// 벡터 검색 RAG 1차 테스트
+		if ("vector_rag".equals(questionType)) {
+			int requesterLevel = getPermissionLevel(requester);
 
+			List<Map<String, Object>> vectorResults = openSearchService.vectorSearch("hr_basic_1", question, 5);
+
+			if (vectorResults == null || vectorResults.isEmpty()) {
+				result.put("success", false);
+				result.put("question", question);
+				result.put("answer", "벡터 검색 결과가 없습니다.");
+				result.put("permission", createPermission(true, requesterLevel, 1));
+				result.put("sources", new ArrayList<Map<String, Object>>());
+				result.put("error", createError("VECTOR_SEARCH_EMPTY", "OpenSearch 벡터 검색 결과가 없습니다."));
+				return result;
+			}
+
+			String answer = createVectorSearchAnswer(vectorResults);
+
+			result.put("success", true);
+			result.put("question", question);
+			result.put("answer", answer);
+			result.put("permission", createPermission(true, requesterLevel, 1));
+			result.put("sources", createSourcesFromList("hr_basic_1", vectorResults));
+			result.put("error", null);
+
+			return result;
+		}
 		// 6. 조회 대상 판단
 		Map<String, Object> targetBasic = detectTargetEmployee(question, employeeId, requester, session);
 
@@ -228,7 +254,8 @@ public class ChatService {
 		String q = question.replaceAll(" ", "");
 
 		// 1. 명확히 본인 질문
-		if (q.contains("내") || q.contains("나의") || q.contains("본인")) {
+		if (q.contains("내") || q.contains("나의") || q.contains("본인") || q.contains("나는") || q.contains("난")
+				|| q.equals("나")) {
 			return requester;
 		}
 
@@ -252,8 +279,20 @@ public class ChatService {
 
 		// 4. 팀장 질문
 		if (q.contains("팀장") || q.contains("팀장님")) {
-			String department = String.valueOf(requester.get("부서"));
-			String team = String.valueOf(requester.get("팀"));
+
+			Map<String, Object> baseEmployee = null;
+
+			// 질문 안에 특정 이름이 있으면 먼저 그 사람을 찾음
+			Map<String, Object> searchedEmployee = openSearchService.searchBasicByQuestion(question);
+
+			if (searchedEmployee != null) {
+				baseEmployee = searchedEmployee;
+			} else {
+				baseEmployee = requester;
+			}
+
+			String department = String.valueOf(baseEmployee.get("부서"));
+			String team = String.valueOf(baseEmployee.get("팀"));
 
 			Map<String, Object> teamLeader = openSearchService.searchTeamLeader(department, team);
 
@@ -340,6 +379,11 @@ public class ChatService {
 		cleaned = cleaned.replace("고과", "");
 		cleaned = cleaned.replace("성과", "");
 
+		cleaned = cleaned.replace("나는", "");
+		cleaned = cleaned.replace("난", "");
+		cleaned = cleaned.replace("나", "");
+		cleaned = cleaned.replace("무슨", "");
+
 		cleaned = cleaned.replace("은", "");
 		cleaned = cleaned.replace("는", "");
 		cleaned = cleaned.replace("이", "");
@@ -362,7 +406,11 @@ public class ChatService {
 		if (q.contains("상사") || q.contains("윗사람") || q.contains("관리자")) {
 			return "manager";
 		}
-
+		if (q.contains("검색") || q.contains("찾아줘") || q.contains("찾아") || q.contains("요약") || q.contains("비슷")
+				|| q.contains("높은") || q.contains("낮은") || q.contains("많은") || q.contains("적은") || q.contains("좋은")
+				|| q.contains("우수")) {
+			return "vector_rag";
+		}
 		if ((q.contains("부서") && (q.contains("종류") || q.contains("목록") || q.contains("전체") || q.contains("뭐뭐")))
 				|| q.contains("부서리스트")) {
 			return "department_list";
@@ -469,10 +517,13 @@ public class ChatService {
 		String q = question == null ? "" : question.replaceAll(" ", "");
 
 		if ("basic".equals(questionType)) {
-			if (q.contains("이름") || q.contains("성명")) {
-				return name + "님의 이름은 " + name + "입니다.";
+			if (q.contains("팀장") || q.contains("팀장님")) {
+				return "팀장은 " + name + "님입니다.";
 			}
 
+			if (q.contains("이름") || q.contains("성명")) {
+				return name + "님입니다.";
+			}
 			if (q.contains("직책")) {
 				return name + "님의 직책은 " + role + "입니다.";
 			}
@@ -554,6 +605,22 @@ public class ChatService {
 		}
 
 		return "조회된 팀원은 총 " + teamMembers.size() + "명이며, " + String.join(", ", names) + "입니다.";
+	}
+
+	private String createVectorSearchAnswer(List<Map<String, Object>> results) {
+		List<String> items = new ArrayList<>();
+
+		for (Map<String, Object> row : results) {
+			String name = String.valueOf(row.get("이름"));
+			String department = String.valueOf(row.get("부서"));
+			String team = String.valueOf(row.get("팀"));
+			String position = String.valueOf(row.get("직급"));
+			String score = String.valueOf(row.get("_score"));
+
+			items.add(name + "(" + department + " " + team + ", " + position + ", score=" + score + ")");
+		}
+
+		return "벡터 검색 결과는 " + String.join(", ", items) + "입니다.";
 	}
 
 	private List<Map<String, Object>> removeEmployeeFromList(List<Map<String, Object>> list, String employeeId) {
