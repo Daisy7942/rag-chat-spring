@@ -14,12 +14,13 @@ import org.springframework.stereotype.Service;
 public class ChatService {
 
 	@Autowired
-	private OllamaService ollamaService;
-
-	@Autowired
 	private OpenSearchService openSearchService;
 
 	public Map<String, Object> generateAnswer(String employeeId, String question) {
+
+		if (employeeId != null) {
+			employeeId = employeeId.trim().toUpperCase();
+		}
 
 		Map<String, Object> result = new HashMap<>();
 
@@ -42,14 +43,112 @@ public class ChatService {
 		if ("unknown".equals(questionType)) {
 			result.put("success", false);
 			result.put("question", question);
-			result.put("answer", "질문을 이해하지 못했습니다. 기본정보, 연봉, 급여, 평가 중 하나를 질문해 주세요.");
+			result.put("answer", "질문을 이해하지 못했습니다. 기본정보, 연봉, 급여, 평가, 주소, 상사, 팀원 중 하나를 질문해 주세요.");
 			result.put("permission", createPermission(true, getPermissionLevel(requester), 1));
 			result.put("sources", new ArrayList<Map<String, Object>>());
 			result.put("error", createError("INVALID_QUESTION", "지원하지 않는 질문 유형입니다."));
 			return result;
 		}
 
-		// 3. 조회 대상 판단
+		// 3. 상사 조회
+		if ("manager".equals(questionType)) {
+			int requesterLevel = getPermissionLevel(requester);
+			int requesterPositionLevel = toInt(requester.get("직급레벨"));
+
+			String requesterEmployeeId = String.valueOf(requester.get("employee_id"));
+			String department = String.valueOf(requester.get("부서"));
+			String team = String.valueOf(requester.get("팀"));
+
+			List<Map<String, Object>> managers = openSearchService.searchManagers(department, team,
+					requesterPositionLevel);
+
+			managers = removeEmployeeFromList(managers, requesterEmployeeId);
+
+			if (managers == null || managers.isEmpty()) {
+				result.put("success", false);
+				result.put("question", question);
+				result.put("answer", "조회 가능한 상사 정보가 없습니다.");
+				result.put("permission", createPermission(true, requesterLevel, 1));
+				result.put("sources", new ArrayList<Map<String, Object>>());
+				result.put("error", createError("DATA_NOT_FOUND", "같은 팀 내 상사 정보를 찾을 수 없습니다."));
+				return result;
+			}
+
+			String answer = createManagersAnswer(managers);
+
+			result.put("success", true);
+			result.put("question", question);
+			result.put("answer", answer);
+			result.put("permission", createPermission(true, requesterLevel, 1));
+			result.put("sources", createSourcesFromList("hr_basic_1", managers));
+			result.put("error", null);
+			return result;
+		}
+
+		// 4. 팀원 목록 조회
+		if ("team_member".equals(questionType)) {
+			int requesterLevel = getPermissionLevel(requester);
+
+			String q = question == null ? "" : question.replaceAll(" ", "");
+			String searchQuestion;
+
+			if (q.contains("우리") || q.contains("내") || q.contains("같은팀")) {
+				String department = String.valueOf(requester.get("부서"));
+				String team = String.valueOf(requester.get("팀"));
+				searchQuestion = department + " " + team + " 팀원";
+			} else {
+				searchQuestion = question;
+			}
+
+			List<Map<String, Object>> teamMembers = openSearchService.searchTeamMembersByQuestion(searchQuestion, 20);
+
+			if (teamMembers == null || teamMembers.isEmpty()) {
+				result.put("success", false);
+				result.put("question", question);
+				result.put("answer", "조회 가능한 팀원 정보가 없습니다.");
+				result.put("permission", createPermission(true, requesterLevel, 1));
+				result.put("sources", new ArrayList<Map<String, Object>>());
+				result.put("error", createError("DATA_NOT_FOUND", "조건에 맞는 팀원 정보를 찾을 수 없습니다."));
+				return result;
+			}
+
+			String answer = createTeamMembersAnswer(teamMembers);
+
+			result.put("success", true);
+			result.put("question", question);
+			result.put("answer", answer);
+			result.put("permission", createPermission(true, requesterLevel, 1));
+			result.put("sources", createSourcesFromList("hr_basic_1", teamMembers));
+			result.put("error", null);
+			return result;
+		}
+		if ("department_list".equals(questionType)) {
+			int requesterLevel = getPermissionLevel(requester);
+
+			List<String> departments = openSearchService.searchDepartmentList();
+
+			if (departments == null || departments.isEmpty()) {
+				result.put("success", false);
+				result.put("question", question);
+				result.put("answer", "조회 가능한 부서 정보가 없습니다.");
+				result.put("permission", createPermission(true, requesterLevel, 1));
+				result.put("sources", new ArrayList<Map<String, Object>>());
+				result.put("error", createError("DATA_NOT_FOUND", "부서 목록을 찾을 수 없습니다."));
+				return result;
+			}
+
+			String answer = "등록된 부서는 " + String.join(", ", departments) + "입니다.";
+
+			result.put("success", true);
+			result.put("question", question);
+			result.put("answer", answer);
+			result.put("permission", createPermission(true, requesterLevel, 1));
+			result.put("sources", new ArrayList<Map<String, Object>>());
+			result.put("error", null);
+			return result;
+		}
+
+		// 5. 조회 대상 판단
 		Map<String, Object> targetBasic = detectTargetEmployee(question, employeeId, requester);
 
 		if (targetBasic == null) {
@@ -64,7 +163,7 @@ public class ChatService {
 
 		String targetEmployeeId = String.valueOf(targetBasic.get("employee_id"));
 
-		// 4. 권한 판단
+		// 6. 권한 판단
 		int requesterLevel = getPermissionLevel(requester);
 		int requiredLevel = getRequiredLevel(questionType);
 
@@ -81,7 +180,7 @@ public class ChatService {
 			return result;
 		}
 
-		// 5. 질문 유형에 맞는 OpenSearch 인덱스 조회
+		// 7. 질문 유형에 맞는 OpenSearch 인덱스 조회
 		String indexName = getIndexName(questionType);
 		Map<String, Object> targetData = openSearchService.searchByEmployeeId(indexName, targetEmployeeId);
 
@@ -95,11 +194,8 @@ public class ChatService {
 			return result;
 		}
 
-		// 6. Ollama에 넘길 데이터 구성
-		String contextData = createContextData(targetBasic, targetData, questionType);
-
-		// 7. Ollama 답변 생성
-		String answer = ollamaService.generateAnswer(contextData, question);
+		// 8. 검증된 Java 답변 생성
+		String answer = createVerifiedAnswer(targetBasic, targetData, questionType, question);
 
 		result.put("success", true);
 		result.put("question", question);
@@ -124,11 +220,28 @@ public class ChatService {
 			return requester;
 		}
 
-		Pattern pattern = Pattern.compile("EMP\\d{4}");
+		String requesterName = String.valueOf(requester.get("이름"));
+
+		if (requesterName != null && question.contains(requesterName)) {
+			return requester;
+		}
+
+		if (q.contains("팀장") || q.contains("팀장님")) {
+			String department = String.valueOf(requester.get("부서"));
+			String team = String.valueOf(requester.get("팀"));
+
+			Map<String, Object> teamLeader = openSearchService.searchTeamLeader(department, team);
+
+			if (teamLeader != null) {
+				return teamLeader;
+			}
+		}
+
+		Pattern pattern = Pattern.compile("EMP\\d{4}", Pattern.CASE_INSENSITIVE);
 		Matcher matcher = pattern.matcher(question);
 
 		if (matcher.find()) {
-			String targetEmployeeId = matcher.group();
+			String targetEmployeeId = matcher.group().toUpperCase();
 			return openSearchService.searchByEmployeeId("hr_basic_1", targetEmployeeId);
 		}
 
@@ -148,7 +261,24 @@ public class ChatService {
 
 		String q = question.replaceAll(" ", "");
 
-		if (q.contains("기본정보") || q.contains("소속") || q.contains("부서") || q.contains("팀") || q.contains("직급")) {
+		if (q.contains("상사") || q.contains("윗사람") || q.contains("관리자")) {
+			return "manager";
+		}
+		if ((q.contains("부서") && (q.contains("종류") || q.contains("목록") || q.contains("전체") || q.contains("뭐뭐")))
+				|| q.contains("부서리스트")) {
+			return "department_list";
+		}
+
+		if (q.contains("팀원") || q.contains("구성원") || q.contains("직원목록") || q.contains("명단")) {
+			return "team_member";
+		}
+
+		if (q.contains("주소") || q.contains("주민등록번호") || q.contains("주민번호")) {
+			return "basic_private";
+		}
+
+		if (q.contains("기본정보") || q.contains("소속") || q.contains("부서") || q.contains("팀") || q.contains("직급")
+				|| q.contains("직책") || q.contains("이름") || q.contains("성명") || q.contains("사원번호") || q.contains("사번")) {
 			return "basic";
 		}
 
@@ -167,9 +297,15 @@ public class ChatService {
 		switch (questionType) {
 		case "basic":
 			return 1;
+		case "team_member":
+			return 1;
+		case "manager":
+			return 1;
 		case "performance":
 			return 2;
 		case "salary":
+			return 3;
+		case "basic_private":
 			return 3;
 		default:
 			return 1;
@@ -184,6 +320,8 @@ public class ChatService {
 			return "hr_salary_3";
 		case "performance":
 			return "hr_performance_2";
+		case "basic_private":
+			return "hr_basic_3";
 		default:
 			return "hr_basic_1";
 		}
@@ -192,6 +330,17 @@ public class ChatService {
 	private int getPermissionLevel(Map<String, Object> employee) {
 		int departmentLevel = toInt(employee.get("부서레벨"));
 		int positionLevel = toInt(employee.get("직급레벨"));
+
+		String department = String.valueOf(employee.get("부서"));
+
+		if ("인사부".equals(department)) {
+			departmentLevel = 3;
+		}
+
+		System.out.println("[권한확인] 이름=" + employee.get("이름"));
+		System.out.println("[권한확인] 부서=" + employee.get("부서"));
+		System.out.println("[권한확인] 부서레벨=" + departmentLevel);
+		System.out.println("[권한확인] 직급레벨=" + positionLevel);
 
 		return Math.max(departmentLevel, positionLevel);
 	}
@@ -212,39 +361,120 @@ public class ChatService {
 		}
 	}
 
-	private String createContextData(Map<String, Object> basicData, Map<String, Object> targetData,
-			String questionType) {
-		String employeeId = String.valueOf(basicData.get("employee_id"));
+	private String createVerifiedAnswer(Map<String, Object> basicData, Map<String, Object> targetData,
+			String questionType, String question) {
+
 		String name = String.valueOf(basicData.get("이름"));
 		String department = String.valueOf(basicData.get("부서"));
 		String team = String.valueOf(basicData.get("팀"));
 		String position = String.valueOf(basicData.get("직급"));
+		String role = String.valueOf(basicData.get("직책"));
 
-		StringBuilder sb = new StringBuilder();
-
-		sb.append("사원번호: ").append(employeeId).append("\n");
-		sb.append("이름: ").append(name).append("\n");
+		String q = question == null ? "" : question.replaceAll(" ", "");
 
 		if ("basic".equals(questionType)) {
-			sb.append("부서: ").append(department).append("\n");
-			sb.append("팀: ").append(team).append("\n");
-			sb.append("직급: ").append(position).append("\n");
-			sb.append("이메일: ").append(targetData.get("이메일")).append("\n");
+			if (q.contains("이름") || q.contains("성명")) {
+				return "이름은 " + name + "입니다.";
+			}
+
+			if (q.contains("직책")) {
+				return name + "님의 직책은 " + role + "입니다.";
+			}
+
+			if (q.contains("직급")) {
+				return name + "님의 직급은 " + position + "입니다.";
+			}
+			if (q.contains("사원번호") || q.contains("사번")) {
+				Object targetEmployeeId = basicData.get("employee_id");
+				return name + "님의 사원번호는 " + targetEmployeeId + "입니다.";
+			}
+
+			if (q.contains("부서")) {
+				return name + "님은 " + department + " 소속입니다.";
+			}
+
+			if (q.contains("팀")) {
+				return name + "님은 " + team + " 소속입니다.";
+			}
+
+			return name + "님은 " + department + " " + team + " 소속 " + position + "이며, 직책은 " + role + "입니다.";
+		}
+
+		if ("basic_private".equals(questionType)) {
+			if (q.contains("주소")) {
+				Object address = targetData.get("주소");
+				return name + "님의 주소는 " + address + "입니다.";
+			}
+
+			if (q.contains("주민등록번호") || q.contains("주민번호")) {
+				Object rrn = targetData.get("주민등록번호");
+				return name + "님의 주민등록번호는 " + rrn + "입니다.";
+			}
+
+			return name + "님의 민감 기본정보는 " + targetData.get("embedding_text") + "입니다.";
 		}
 
 		if ("salary".equals(questionType)) {
-			sb.append("연봉: ").append(targetData.get("연봉")).append("원\n");
-			sb.append("급여은행: ").append(targetData.get("급여은행")).append("\n");
-			sb.append("4대보험가입여부: ").append(targetData.get("4대보험가입여부")).append("\n");
+			Object salaryValue = targetData.get("연봉");
+			int salary = toInt(salaryValue);
+
+			return name + "님의 연봉은 " + String.format("%,d", salary) + "원입니다.";
 		}
 
 		if ("performance".equals(questionType)) {
-			sb.append("성과점수: ").append(targetData.get("성과점수")).append("\n");
-			sb.append("인사고과_2024: ").append(targetData.get("인사고과_2024")).append("\n");
-			sb.append("TOEIC점수: ").append(targetData.get("TOEIC점수")).append("\n");
+			Object score = targetData.get("성과점수");
+			Object grade2024 = targetData.get("인사고과_2024");
+
+			return name + "님의 성과점수는 " + score + "점이며, 2024년 인사고과는 " + grade2024 + "입니다.";
 		}
 
-		return sb.toString();
+		return "조회된 데이터로 답변을 생성할 수 없습니다.";
+	}
+
+	private String createManagersAnswer(List<Map<String, Object>> managers) {
+		List<String> names = new ArrayList<>();
+
+		for (Map<String, Object> manager : managers) {
+			String name = String.valueOf(manager.get("이름"));
+			String position = String.valueOf(manager.get("직급"));
+			String role = String.valueOf(manager.get("직책"));
+
+			names.add(name + "(" + position + ", " + role + ")");
+		}
+
+		return "조회된 상사는 " + String.join(", ", names) + "입니다.";
+	}
+
+	private String createTeamMembersAnswer(List<Map<String, Object>> teamMembers) {
+		List<String> names = new ArrayList<>();
+
+		for (Map<String, Object> member : teamMembers) {
+			String name = String.valueOf(member.get("이름"));
+			String department = String.valueOf(member.get("부서"));
+			String team = String.valueOf(member.get("팀"));
+
+			names.add(name + "(" + department + " " + team + ")");
+		}
+
+		return "조회된 팀원은 총 " + teamMembers.size() + "명이며, " + String.join(", ", names) + "입니다.";
+	}
+
+	private List<Map<String, Object>> removeEmployeeFromList(List<Map<String, Object>> list, String employeeId) {
+		List<Map<String, Object>> filtered = new ArrayList<>();
+
+		if (list == null) {
+			return filtered;
+		}
+
+		for (Map<String, Object> row : list) {
+			String rowEmployeeId = String.valueOf(row.get("employee_id"));
+
+			if (!employeeId.equals(rowEmployeeId)) {
+				filtered.add(row);
+			}
+		}
+
+		return filtered;
 	}
 
 	private Map<String, Object> createPermission(boolean allowed, int permissionLevel, int requiredLevel) {
@@ -267,6 +497,19 @@ public class ChatService {
 		return sources;
 	}
 
+	private List<Map<String, Object>> createSourcesFromList(String indexName, List<Map<String, Object>> rows) {
+		List<Map<String, Object>> sources = new ArrayList<>();
+
+		for (Map<String, Object> row : rows) {
+			Map<String, Object> source = new HashMap<>();
+			source.put("index", indexName);
+			source.put("doc_id", row.get("doc_id"));
+			sources.add(source);
+		}
+
+		return sources;
+	}
+
 	private Map<String, Object> createError(String code, String message) {
 		Map<String, Object> error = new HashMap<>();
 		error.put("code", code);
@@ -280,6 +523,8 @@ public class ChatService {
 			return "급여정보는 Level " + requiredLevel + " 이상만 조회할 수 있습니다.";
 		case "performance":
 			return "성과 및 평가정보는 Level " + requiredLevel + " 이상만 조회할 수 있습니다.";
+		case "basic_private":
+			return "주소, 주민등록번호 등 민감 기본정보는 Level " + requiredLevel + " 이상만 조회할 수 있습니다.";
 		default:
 			return "해당 정보는 Level " + requiredLevel + " 이상만 조회할 수 있습니다.";
 		}

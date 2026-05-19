@@ -33,6 +33,12 @@ public class OllamaService {
 			requestBody.put("prompt", prompt);
 			requestBody.put("stream", false);
 
+			Map<String, Object> options = new HashMap<>();
+			options.put("temperature", 0);
+			options.put("top_p", 0.1);
+
+			requestBody.put("options", options);
+
 			String jsonBody = objectMapper.writeValueAsString(requestBody);
 
 			URL url = new URL(OLLAMA_URL);
@@ -81,8 +87,10 @@ public class OllamaService {
 
 	private String buildPrompt(String contextData, String question) {
 
-		return "" + "너는 인사 데이터 조회 챗봇이다.\n" + "답변 앞에 반드시 [OLLAMA]를 붙여라.\n" + "반드시 [조회된 데이터]에 있는 내용만 사용해서 답변해라.\n"
-				+ "답변은 반드시 한국어로 작성해라.\n" + "답변은 한 문장으로 짧고 정확하게 작성해라.\n" + "\n" + "[조회된 데이터]\n" + contextData + "\n\n"
+		return "" + "너는 인사 데이터 조회 챗봇이다.\n" + "반드시 [조회된 데이터]에 있는 내용만 사용해서 답변해라.\n" + "제공되지 않은 정보는 추측하지 마라.\n"
+				+ "권한 판단은 이미 서버에서 끝났으므로 다시 판단하지 마라.\n" + "답변은 반드시 한국어로 작성해라.\n" + "답변은 한 문장으로 짧고 정확하게 작성해라.\n"
+				+ "금액은 천 단위 쉼표를 포함해서 작성해라.\n" + "질문이 이름을 묻는 경우 [조회된 데이터]의 이름 값을 그대로 답변해라.\n"
+				+ "질문이 팀장님을 묻는 경우 [조회된 데이터]의 직책이 팀장인 사람의 이름을 답변해라.\n" + "\n" + "[조회된 데이터]\n" + contextData + "\n\n"
 				+ "[사용자 질문]\n" + question + "\n\n" + "[답변]";
 	}
 
