@@ -7,6 +7,8 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import javax.servlet.http.HttpSession;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -16,7 +18,7 @@ public class ChatService {
 	@Autowired
 	private OpenSearchService openSearchService;
 
-	public Map<String, Object> generateAnswer(String employeeId, String question) {
+	public Map<String, Object> generateAnswer(String employeeId, String question, HttpSession session) {
 
 		if (employeeId != null) {
 			employeeId = employeeId.trim().toUpperCase();
@@ -82,6 +84,7 @@ public class ChatService {
 			result.put("permission", createPermission(true, requesterLevel, 1));
 			result.put("sources", createSourcesFromList("hr_basic_1", managers));
 			result.put("error", null);
+
 			return result;
 		}
 
@@ -120,8 +123,11 @@ public class ChatService {
 			result.put("permission", createPermission(true, requesterLevel, 1));
 			result.put("sources", createSourcesFromList("hr_basic_1", teamMembers));
 			result.put("error", null);
+
 			return result;
 		}
+
+		// 5. 부서 목록 조회
 		if ("department_list".equals(questionType)) {
 			int requesterLevel = getPermissionLevel(requester);
 
@@ -145,11 +151,12 @@ public class ChatService {
 			result.put("permission", createPermission(true, requesterLevel, 1));
 			result.put("sources", new ArrayList<Map<String, Object>>());
 			result.put("error", null);
+
 			return result;
 		}
 
-		// 5. 조회 대상 판단
-		Map<String, Object> targetBasic = detectTargetEmployee(question, employeeId, requester);
+		// 6. 조회 대상 판단
+		Map<String, Object> targetBasic = detectTargetEmployee(question, employeeId, requester, session);
 
 		if (targetBasic == null) {
 			result.put("success", false);
@@ -163,7 +170,11 @@ public class ChatService {
 
 		String targetEmployeeId = String.valueOf(targetBasic.get("employee_id"));
 
-		// 6. 권한 판단
+		if (session != null) {
+			session.setAttribute("lastTargetEmployeeId", targetEmployeeId);
+		}
+
+		// 7. 권한 판단
 		int requesterLevel = getPermissionLevel(requester);
 		int requiredLevel = getRequiredLevel(questionType);
 
@@ -180,7 +191,7 @@ public class ChatService {
 			return result;
 		}
 
-		// 7. 질문 유형에 맞는 OpenSearch 인덱스 조회
+		// 8. 질문 유형에 맞는 OpenSearch 인덱스 조회
 		String indexName = getIndexName(questionType);
 		Map<String, Object> targetData = openSearchService.searchByEmployeeId(indexName, targetEmployeeId);
 
@@ -194,7 +205,7 @@ public class ChatService {
 			return result;
 		}
 
-		// 8. 검증된 Java 답변 생성
+		// 9. 검증된 Java 답변 생성
 		String answer = createVerifiedAnswer(targetBasic, targetData, questionType, question);
 
 		result.put("success", true);
@@ -208,7 +219,7 @@ public class ChatService {
 	}
 
 	private Map<String, Object> detectTargetEmployee(String question, String requesterEmployeeId,
-			Map<String, Object> requester) {
+			Map<String, Object> requester, HttpSession session) {
 
 		if (question == null || question.trim().isEmpty()) {
 			return requester;
@@ -216,16 +227,30 @@ public class ChatService {
 
 		String q = question.replaceAll(" ", "");
 
+		// 1. 명확히 본인 질문
 		if (q.contains("내") || q.contains("나의") || q.contains("본인")) {
 			return requester;
 		}
 
+		// 2. "그 사람", "그분", "방금" 같은 후속 질문은 마지막 조회 대상 사용
+		if (q.contains("그사람") || q.contains("그분") || q.contains("방금")) {
+			Map<String, Object> lastTarget = getLastTargetEmployee(session);
+
+			if (lastTarget != null) {
+				return lastTarget;
+			}
+
+			return requester;
+		}
+
+		// 3. 질문에 요청자 본인 이름이 들어가면 본인
 		String requesterName = String.valueOf(requester.get("이름"));
 
 		if (requesterName != null && question.contains(requesterName)) {
 			return requester;
 		}
 
+		// 4. 팀장 질문
 		if (q.contains("팀장") || q.contains("팀장님")) {
 			String department = String.valueOf(requester.get("부서"));
 			String team = String.valueOf(requester.get("팀"));
@@ -237,6 +262,7 @@ public class ChatService {
 			}
 		}
 
+		// 5. EMP0001 같은 사원번호가 있으면 해당 사원
 		Pattern pattern = Pattern.compile("EMP\\d{4}", Pattern.CASE_INSENSITIVE);
 		Matcher matcher = pattern.matcher(question);
 
@@ -245,6 +271,20 @@ public class ChatService {
 			return openSearchService.searchByEmployeeId("hr_basic_1", targetEmployeeId);
 		}
 
+		// 6. 대상자가 없는 짧은 후속 질문이면 마지막 조회 대상 사용
+		// 예: "직책은?", "부서는?", "연봉은?", "주소는?"
+		if (!hasExplicitTargetText(q)) {
+			Map<String, Object> lastTarget = getLastTargetEmployee(session);
+
+			if (lastTarget != null) {
+				return lastTarget;
+			}
+
+			return requester;
+		}
+
+		// 7. 이름이 포함된 질문은 OpenSearch로 대상 검색
+		// 예: "오민호 사원번호 알려줘"
 		Map<String, Object> searched = openSearchService.searchBasicByQuestion(question);
 
 		if (searched != null) {
@@ -252,6 +292,64 @@ public class ChatService {
 		}
 
 		return requester;
+	}
+
+	private Map<String, Object> getLastTargetEmployee(HttpSession session) {
+		if (session == null) {
+			return null;
+		}
+
+		Object lastTargetEmployeeId = session.getAttribute("lastTargetEmployeeId");
+
+		if (lastTargetEmployeeId == null) {
+			return null;
+		}
+
+		return openSearchService.searchByEmployeeId("hr_basic_1", String.valueOf(lastTargetEmployeeId));
+	}
+
+	private boolean hasExplicitTargetText(String q) {
+		if (q == null || q.trim().isEmpty()) {
+			return false;
+		}
+
+		String cleaned = q;
+
+		cleaned = cleaned.replace("알려줘", "");
+		cleaned = cleaned.replace("말해줘", "");
+		cleaned = cleaned.replace("뭐야", "");
+		cleaned = cleaned.replace("뭐임", "");
+		cleaned = cleaned.replace("무엇", "");
+		cleaned = cleaned.replace("어디", "");
+
+		cleaned = cleaned.replace("이름", "");
+		cleaned = cleaned.replace("성명", "");
+		cleaned = cleaned.replace("사원번호", "");
+		cleaned = cleaned.replace("사번", "");
+		cleaned = cleaned.replace("부서", "");
+		cleaned = cleaned.replace("팀", "");
+		cleaned = cleaned.replace("직급", "");
+		cleaned = cleaned.replace("직책", "");
+		cleaned = cleaned.replace("기본정보", "");
+		cleaned = cleaned.replace("소속", "");
+		cleaned = cleaned.replace("주소", "");
+		cleaned = cleaned.replace("연봉", "");
+		cleaned = cleaned.replace("급여", "");
+		cleaned = cleaned.replace("월급", "");
+		cleaned = cleaned.replace("평가", "");
+		cleaned = cleaned.replace("고과", "");
+		cleaned = cleaned.replace("성과", "");
+
+		cleaned = cleaned.replace("은", "");
+		cleaned = cleaned.replace("는", "");
+		cleaned = cleaned.replace("이", "");
+		cleaned = cleaned.replace("가", "");
+		cleaned = cleaned.replace("을", "");
+		cleaned = cleaned.replace("를", "");
+		cleaned = cleaned.replace("의", "");
+		cleaned = cleaned.replace("?", "");
+
+		return cleaned.trim().length() >= 2;
 	}
 
 	private String detectQuestionType(String question) {
@@ -264,6 +362,7 @@ public class ChatService {
 		if (q.contains("상사") || q.contains("윗사람") || q.contains("관리자")) {
 			return "manager";
 		}
+
 		if ((q.contains("부서") && (q.contains("종류") || q.contains("목록") || q.contains("전체") || q.contains("뭐뭐")))
 				|| q.contains("부서리스트")) {
 			return "department_list";
@@ -301,6 +400,8 @@ public class ChatService {
 			return 1;
 		case "manager":
 			return 1;
+		case "department_list":
+			return 1;
 		case "performance":
 			return 2;
 		case "salary":
@@ -337,11 +438,6 @@ public class ChatService {
 			departmentLevel = 3;
 		}
 
-		System.out.println("[권한확인] 이름=" + employee.get("이름"));
-		System.out.println("[권한확인] 부서=" + employee.get("부서"));
-		System.out.println("[권한확인] 부서레벨=" + departmentLevel);
-		System.out.println("[권한확인] 직급레벨=" + positionLevel);
-
 		return Math.max(departmentLevel, positionLevel);
 	}
 
@@ -374,7 +470,7 @@ public class ChatService {
 
 		if ("basic".equals(questionType)) {
 			if (q.contains("이름") || q.contains("성명")) {
-				return "이름은 " + name + "입니다.";
+				return name + "님의 이름은 " + name + "입니다.";
 			}
 
 			if (q.contains("직책")) {
@@ -384,6 +480,7 @@ public class ChatService {
 			if (q.contains("직급")) {
 				return name + "님의 직급은 " + position + "입니다.";
 			}
+
 			if (q.contains("사원번호") || q.contains("사번")) {
 				Object targetEmployeeId = basicData.get("employee_id");
 				return name + "님의 사원번호는 " + targetEmployeeId + "입니다.";

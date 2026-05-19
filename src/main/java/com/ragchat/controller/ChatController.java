@@ -1,6 +1,7 @@
 package com.ragchat.controller;
 
 import java.util.Map;
+import javax.servlet.http.HttpSession;
 
 import com.ragchat.service.ChatService;
 
@@ -26,8 +27,9 @@ public class ChatController {
     @ResponseBody
     public Map<String, Object> chatAjax(
             @RequestParam("employee_id") String employeeId,
-            @RequestParam("question") String question
-    ) {
-        return chatService.generateAnswer(employeeId, question);
+            @RequestParam("question") String question,
+            HttpSession session) {
+
+        return chatService.generateAnswer(employeeId, question, session);
     }
 }
