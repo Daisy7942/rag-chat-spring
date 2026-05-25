@@ -114,6 +114,89 @@ public class OpenSearchService {
 		}
 	}
 
+	public Map<String, Object> searchByNameExact(String name) {
+		try {
+			if (name == null || name.trim().isEmpty()) {
+				return null;
+			}
+
+			name = name.trim();
+
+			String url = getConfig("OPENSEARCH_URL", DEFAULT_OPENSEARCH_URL) + "/hr_basic_1/_search";
+
+			Map<String, Object> term = new HashMap<>();
+			term.put("이름.keyword", name);
+
+			Map<String, Object> query = new HashMap<>();
+			query.put("term", term);
+
+			Map<String, Object> body = new HashMap<>();
+			body.put("query", query);
+			body.put("size", 1);
+
+			String responseBody = sendPost(url, body);
+
+			System.out.println("[OpenSearch] searchByNameExact name=" + name);
+			System.out.println("[OpenSearch] response=" + responseBody);
+
+			JsonNode root = objectMapper.readTree(responseBody);
+			JsonNode hits = root.path("hits").path("hits");
+
+			if (!hits.isArray() || hits.size() == 0) {
+				return null;
+			}
+
+			JsonNode source = hits.get(0).path("_source");
+
+			return objectMapper.convertValue(source, Map.class);
+
+		} catch (Exception e) {
+			System.out.println("[OpenSearch] searchByNameExact error");
+			e.printStackTrace();
+			return null;
+		}
+	}
+
+	public List<Map<String, Object>> searchEmployeesByPosition(String position, int size) {
+		List<Map<String, Object>> resultList = new ArrayList<>();
+
+		try {
+			String url = getConfig("OPENSEARCH_URL", DEFAULT_OPENSEARCH_URL) + "/hr_basic_1/_search";
+
+			Map<String, Object> term = new HashMap<>();
+			term.put("직급.keyword", position);
+
+			Map<String, Object> query = new HashMap<>();
+			query.put("term", term);
+
+			Map<String, Object> body = new HashMap<>();
+			body.put("query", query);
+			body.put("size", size);
+
+			String responseBody = sendPost(url, body);
+
+			JsonNode root = objectMapper.readTree(responseBody);
+			JsonNode hits = root.path("hits").path("hits");
+
+			if (!hits.isArray() || hits.size() == 0) {
+				return resultList;
+			}
+
+			for (JsonNode hit : hits) {
+				JsonNode source = hit.path("_source");
+				Map<String, Object> row = objectMapper.convertValue(source, Map.class);
+				resultList.add(row);
+			}
+
+			return resultList;
+
+		} catch (Exception e) {
+			System.out.println("[OpenSearch] searchEmployeesByPosition error");
+			e.printStackTrace();
+			return resultList;
+		}
+	}
+
 	public Map<String, Object> searchTeamLeader(String department, String team) {
 		try {
 			String url = getConfig("OPENSEARCH_URL", DEFAULT_OPENSEARCH_URL) + "/hr_basic_1/_search";
@@ -583,6 +666,108 @@ public class OpenSearchService {
 
 		} catch (Exception e) {
 			return null;
+		}
+	}
+
+	public List<Map<String, Object>> searchTeamMembers(String department, String team, int size) {
+		List<Map<String, Object>> resultList = new ArrayList<>();
+
+		try {
+			String url = getConfig("OPENSEARCH_URL", DEFAULT_OPENSEARCH_URL) + "/hr_basic_1/_search";
+
+			List<Map<String, Object>> mustList = new ArrayList<>();
+
+			Map<String, Object> departmentQuery = new HashMap<>();
+			departmentQuery.put("term", Map.of("부서.keyword", department));
+			mustList.add(departmentQuery);
+
+			Map<String, Object> teamQuery = new HashMap<>();
+			teamQuery.put("term", Map.of("팀.keyword", team));
+			mustList.add(teamQuery);
+
+			Map<String, Object> roleQuery = new HashMap<>();
+			roleQuery.put("term", Map.of("직책.keyword", "팀원"));
+			mustList.add(roleQuery);
+
+			Map<String, Object> bool = new HashMap<>();
+			bool.put("must", mustList);
+
+			Map<String, Object> query = new HashMap<>();
+			query.put("bool", bool);
+
+			Map<String, Object> body = new HashMap<>();
+			body.put("query", query);
+			body.put("size", size);
+
+			String responseBody = sendPost(url, body);
+			JsonNode root = objectMapper.readTree(responseBody);
+			JsonNode hits = root.path("hits").path("hits");
+
+			if (!hits.isArray() || hits.size() == 0) {
+				return resultList;
+			}
+
+			for (JsonNode hit : hits) {
+				JsonNode source = hit.path("_source");
+				Map<String, Object> row = objectMapper.convertValue(source, Map.class);
+				resultList.add(row);
+			}
+
+			return resultList;
+
+		} catch (Exception e) {
+			System.out.println("[OpenSearch] searchTeamMembers error");
+			e.printStackTrace();
+			return resultList;
+		}
+	}
+
+	public List<Map<String, Object>> searchTeamMembersByDepartment(String department, int size) {
+		List<Map<String, Object>> resultList = new ArrayList<>();
+
+		try {
+			String url = getConfig("OPENSEARCH_URL", DEFAULT_OPENSEARCH_URL) + "/hr_basic_1/_search";
+
+			List<Map<String, Object>> mustList = new ArrayList<>();
+
+			Map<String, Object> departmentQuery = new HashMap<>();
+			departmentQuery.put("term", Map.of("부서.keyword", department));
+			mustList.add(departmentQuery);
+
+			Map<String, Object> roleQuery = new HashMap<>();
+			roleQuery.put("term", Map.of("직책.keyword", "팀원"));
+			mustList.add(roleQuery);
+
+			Map<String, Object> bool = new HashMap<>();
+			bool.put("must", mustList);
+
+			Map<String, Object> query = new HashMap<>();
+			query.put("bool", bool);
+
+			Map<String, Object> body = new HashMap<>();
+			body.put("query", query);
+			body.put("size", size);
+
+			String responseBody = sendPost(url, body);
+			JsonNode root = objectMapper.readTree(responseBody);
+			JsonNode hits = root.path("hits").path("hits");
+
+			if (!hits.isArray() || hits.size() == 0) {
+				return resultList;
+			}
+
+			for (JsonNode hit : hits) {
+				JsonNode source = hit.path("_source");
+				Map<String, Object> row = objectMapper.convertValue(source, Map.class);
+				resultList.add(row);
+			}
+
+			return resultList;
+
+		} catch (Exception e) {
+			System.out.println("[OpenSearch] searchTeamMembersByDepartment error");
+			e.printStackTrace();
+			return resultList;
 		}
 	}
 }
