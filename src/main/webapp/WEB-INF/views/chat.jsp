@@ -181,8 +181,8 @@ button:disabled {
 		<div class="chat-container">
 
 			<div class="chat-header">
-				<h2>RAG 인사규정 챗봇</h2>
-				<p>OpenSearch 기반으로 인사규정과 사내 데이터를 검색해 답변합니다.</p>
+				<h2>RAG 인사데이터 챗봇</h2>
+				<p>OpenSearch 기반으로 인사 데이터를 검색해 답변합니다.</p>
 			</div>
 
 			<div id="chatBox" class="chat-box">
@@ -202,7 +202,7 @@ button:disabled {
 
 				<div class="input-row">
 					<input type="text" id="question" name="question"
-						placeholder="질문을 입력하세요. 예: 병가는 어떤 경우에 사용할 수 있어?">
+						placeholder="질문을 입력하세요. 예: 내 연봉 얼마야?">
 					<button type="submit" id="sendButton">전송</button>
 				</div>
 
