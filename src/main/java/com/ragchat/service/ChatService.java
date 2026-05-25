@@ -17,6 +17,8 @@ public class ChatService {
 
 	@Autowired
 	private OpenSearchService openSearchService;
+	@Autowired
+	private FieldMappingService fieldMappingService;
 
 	public Map<String, Object> generateAnswer(String employeeId, String question, HttpSession session) {
 
@@ -32,25 +34,24 @@ public class ChatService {
 		if (requester == null) {
 			result.put("success", false);
 			result.put("question", question);
-			result.put("answer", "존재하지 않는 사원번호입니다.");
+			result.put("answer", "입력한 사원번호가 존재하지 않습니다. 사원번호를 다시 확인해 주세요.");
 			result.put("permission", createPermission(false, 0, 1));
 			result.put("sources", new ArrayList<Map<String, Object>>());
-			result.put("error", createError("EMPLOYEE_NOT_FOUND", "요청자 사원번호를 찾을 수 없습니다."));
+			result.put("error", createError("REQUESTER_NOT_FOUND", "입력한 요청자 사원번호를 찾을 수 없습니다."));
 			return result;
+		}
+		// 사원번호가 바뀌면 이전 대화 대상 초기화
+		if (session != null) {
+			String sessionEmployeeId = (String) session.getAttribute("currentEmployeeId");
+
+			if (sessionEmployeeId == null || !sessionEmployeeId.equals(employeeId)) {
+				session.setAttribute("currentEmployeeId", employeeId);
+				session.removeAttribute("lastTargetEmployeeId");
+			}
 		}
 
 		// 2. 질문 유형 판단
 		String questionType = detectQuestionType(question);
-
-		if ("unknown".equals(questionType)) {
-			result.put("success", false);
-			result.put("question", question);
-			result.put("answer", "질문을 이해하지 못했습니다. 기본정보, 연봉, 급여, 평가, 주소, 상사, 팀원 중 하나를 질문해 주세요.");
-			result.put("permission", createPermission(true, getPermissionLevel(requester), 1));
-			result.put("sources", new ArrayList<Map<String, Object>>());
-			result.put("error", createError("INVALID_QUESTION", "지원하지 않는 질문 유형입니다."));
-			return result;
-		}
 
 		// 3. 상사 조회
 		if ("manager".equals(questionType)) {
@@ -181,6 +182,24 @@ public class ChatService {
 
 			return result;
 		}
+		// 6. 컬럼명 기반 동적 조회
+		FieldMappingService.FieldMeta fieldMeta = fieldMappingService.findByQuestion(question);
+
+		if (fieldMeta != null) {
+			return handleDynamicFieldLookup(employeeId, question, session, requester, fieldMeta);
+		}
+
+		// 7. 그래도 못 알아들으면 unknown 처리
+		if ("unknown".equals(questionType)) {
+			result.put("success", false);
+			result.put("question", question);
+			result.put("answer", "질문을 이해하지 못했습니다. 기본정보, 연봉, 급여, 평가, 주소, 상사, 팀원 중 하나를 질문해 주세요.");
+			result.put("permission", createPermission(true, getPermissionLevel(requester), 1));
+			result.put("sources", new ArrayList<Map<String, Object>>());
+			result.put("error", createError("INVALID_QUESTION", "지원하지 않는 질문 유형입니다."));
+			return result;
+		}
+
 		// 6. 조회 대상 판단
 		Map<String, Object> targetBasic = detectTargetEmployee(question, employeeId, requester, session);
 
@@ -420,7 +439,8 @@ public class ChatService {
 			return "team_member";
 		}
 
-		if (q.contains("주소") || q.contains("주민등록번호") || q.contains("주민번호")) {
+		if (q.contains("주소") || q.contains("어디살") || q.contains("사는곳") || q.contains("거주지") || q.contains("집어디")
+				|| q.contains("주민등록번호") || q.contains("주민번호")) {
 			return "basic_private";
 		}
 
@@ -505,6 +525,87 @@ public class ChatService {
 		}
 	}
 
+	private Map<String, Object> handleDynamicFieldLookup(String employeeId, String question, HttpSession session,
+			Map<String, Object> requester, FieldMappingService.FieldMeta fieldMeta) {
+
+		Map<String, Object> result = new HashMap<>();
+
+		Map<String, Object> targetBasic = detectTargetEmployee(question, employeeId, requester, session);
+
+		if (targetBasic == null) {
+			result.put("success", false);
+			result.put("question", question);
+			result.put("answer", "조회 대상 사원을 찾을 수 없습니다.");
+			result.put("permission",
+					createPermission(false, getPermissionLevel(requester), fieldMeta.getRequiredLevel()));
+			result.put("sources", new ArrayList<Map<String, Object>>());
+			result.put("error", createError("TARGET_NOT_FOUND", "조회 대상 사원 정보를 찾을 수 없습니다."));
+			return result;
+		}
+
+		String targetEmployeeId = String.valueOf(targetBasic.get("employee_id"));
+
+		if (session != null) {
+			session.setAttribute("lastTargetEmployeeId", targetEmployeeId);
+		}
+
+		int requesterLevel = getPermissionLevel(requester);
+		int requiredLevel = fieldMeta.getRequiredLevel();
+
+		boolean isSelf = employeeId.equals(targetEmployeeId);
+		boolean allowed = isSelf || requesterLevel >= requiredLevel;
+
+		if (!allowed) {
+			result.put("success", false);
+			result.put("question", question);
+			result.put("answer", "요청하신 정보는 현재 권한으로 조회할 수 없습니다.");
+			result.put("permission", createPermission(false, requesterLevel, requiredLevel));
+			result.put("sources", new ArrayList<Map<String, Object>>());
+			result.put("error", createError("ACCESS_DENIED",
+					fieldMeta.getDisplayName() + " 정보는 Level " + requiredLevel + " 이상만 조회할 수 있습니다."));
+			return result;
+		}
+
+		String indexName = fieldMeta.getIndexName();
+		String fieldName = fieldMeta.getFieldName();
+
+		Map<String, Object> targetData = openSearchService.searchByEmployeeId(indexName, targetEmployeeId);
+
+		if (targetData == null) {
+			result.put("success", false);
+			result.put("question", question);
+			result.put("answer", "조회 가능한 데이터가 없습니다.");
+			result.put("permission", createPermission(true, requesterLevel, requiredLevel));
+			result.put("sources", new ArrayList<Map<String, Object>>());
+			result.put("error", createError("DATA_NOT_FOUND", "OpenSearch에서 대상 데이터를 찾을 수 없습니다."));
+			return result;
+		}
+
+		Object value = targetData.get(fieldName);
+
+		if (value == null || String.valueOf(value).trim().isEmpty() || "null".equals(String.valueOf(value))) {
+			result.put("success", false);
+			result.put("question", question);
+			result.put("answer", "조회된 데이터에 해당 항목 값이 없습니다.");
+			result.put("permission", createPermission(true, requesterLevel, requiredLevel));
+			result.put("sources", createSources(indexName, targetData));
+			result.put("error", createError("FIELD_VALUE_NOT_FOUND", fieldName + " 값을 찾을 수 없습니다."));
+			return result;
+		}
+
+		String name = String.valueOf(targetBasic.get("이름"));
+		String answer = name + "님의 " + fieldMeta.getDisplayName() + " 정보는 " + value + "입니다.";
+
+		result.put("success", true);
+		result.put("question", question);
+		result.put("answer", answer);
+		result.put("permission", createPermission(true, requesterLevel, requiredLevel));
+		result.put("sources", createSources(indexName, targetData));
+		result.put("error", null);
+
+		return result;
+	}
+
 	private String createVerifiedAnswer(Map<String, Object> basicData, Map<String, Object> targetData,
 			String questionType, String question) {
 
@@ -549,11 +650,10 @@ public class ChatService {
 		}
 
 		if ("basic_private".equals(questionType)) {
-			if (q.contains("주소")) {
+			if (q.contains("주소") || q.contains("어디살") || q.contains("사는곳") || q.contains("거주지") || q.contains("집어디")) {
 				Object address = targetData.get("주소");
 				return name + "님의 주소는 " + address + "입니다.";
 			}
-
 			if (q.contains("주민등록번호") || q.contains("주민번호")) {
 				Object rrn = targetData.get("주민등록번호");
 				return name + "님의 주민등록번호는 " + rrn + "입니다.";
