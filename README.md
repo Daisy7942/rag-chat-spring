@@ -403,13 +403,23 @@ http://localhost:8181/rag-chat-spring/chat
 
 1. 채팅 화면 최초 진입 화면
   <img width="875" height="1083" alt="image" src="https://github.com/user-attachments/assets/c315a0d9-fcb7-4d0c-af68-431dcdcb7b9e" />
+
+  
 2. 정상 답변 예시 화면
   <img width="862" height="946" alt="image" src="https://github.com/user-attachments/assets/efd1ce3f-6f11-4524-9bd1-fa3321ae3cd3" />
+
+  
 3. 권한 제한 답변 예시 화면
   <img width="866" height="954" alt="image" src="https://github.com/user-attachments/assets/677bee1d-ec51-455e-8474-59cba702e475" />
+
+  
 4. FastAPI `/health` 정상 응답 화면
   <img width="1434" height="1064" alt="image" src="https://github.com/user-attachments/assets/1b5ca3b3-df27-4607-9988-b00e7891be70" />
+
+  
   <img width="929" height="961" alt="image" src="https://github.com/user-attachments/assets/0d773287-5f81-4df2-9486-e9822fd603b5" />
+
+  
 5. OpenSearch 검색 결과 화면
   <img width="1169" height="1202" alt="2026-05-25 15 23 16" src="https://github.com/user-attachments/assets/3999328a-4b23-4b25-963a-9f47ef2ac57f" />
 
