@@ -189,7 +189,7 @@ button:disabled {
 				<div class="message-row bot-row">
 					<div class="message bot-message">
 						<div class="message-name">챗봇</div>
-						안녕하세요. 인사규정에 대해 궁금한 내용을 질문해 주세요.
+						안녕하세요. 인사 데이터에 대해 궁금한 내용을 질문해 주세요.
 					</div>
 				</div>
 			</div>
